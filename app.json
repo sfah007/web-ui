@@ -1,0 +1,7 @@
+{
+  "name": "web ui",
+  "description": "web ui",
+  "repository": "https://github.com/sfah007/web-ui",
+  "logo": "https://telegra.ph/file/2b42f6c9f917822555d32.png",
+  "keywords": ["node", "express", "static"]
+}
