@@ -15,7 +15,7 @@ import {SET_TORRENT_SUCCESS, SET_PWD_SUCCESS,
         SET_NEW_POSITION, SET_SEEDER, SET_ZIP_DOWNLOAD,
         SET_ATTACHED_TRACKS, SET_LAST_TIME, SET_FIRST_PLAY, SET_IS_CACHED, SET_EXTERNAL_CONTROLS,
         SET_DOWNLOAD_PATH, SET_DOWNLOAD_STAT, DROP_DOWNLOAD_STAT, SET_DOWNLOAD_TYPE,
-        UPDATE_WINDOW_WIDTH, SET_INITED, SET_PROGRESS, SET_USER_LANG,
+        UPDATE_WINDOW_WIDTH, SET_INITED, SET_PROGRESS, SET_USER_LANG, SET_API_UNREACHABLE,
        } from './mutationTypes';
 import {PLAYING, PAUSE} from './playerStatusTypes';
 import {VIDEO, DOWNLOAD} from './viewModeTypes';
@@ -26,10 +26,10 @@ import fileToTorrent from './fileToTorrent';
 import {getLangRoute} from './../langRoutes';
 import getRelevantTrack from './../relevantTrack';
 import stoplistCheck from '../stoplistCheck';
+import stringToTorrent from './stringToTorrent';
 const debug = require('debug')('webtor:lib:store');
 const md5 = require('md5');
 const Url = require('url-parse');
-const semver = require('semver');
 const cloneDeep = require('clone-deep');
 const loadScript = require('load-script2');
 import dot from 'dot-object';
@@ -267,8 +267,13 @@ export default function({router, message, db, sdk, ext, i18n, injectHash, inject
                     let time = 0;
                     let track = null;
                     const tracks = await getters.tracks;
-                    if (tracks.length > 0 && tracks[0].autoselect == true) {
-                        track = tracks[0];
+                    if (tracks.length > 0) {
+                        for (const t of tracks) {
+                            if (t.autoselect) {
+                                track = t;
+                                break;
+                            }
+                        }
                     }
                     if (userData && userData.time) time = userData.time;
                     if (userData && userData.subtitle && userData.subtitle.src) {
@@ -408,10 +413,11 @@ export default function({router, message, db, sdk, ext, i18n, injectHash, inject
             const r = router.currentRoute;
             let torrent = state.torrent;
             if (typeof newTorrent == 'string') {
-                if (newTorrent.match(/^magnet/) || newTorrent.match(/^[a-fA-F0-9]{40}$/)) {
-                    newTorrent = parseTorrent(newTorrent);
-                } else {
+                const r = stringToTorrent(newTorrent);
+                if (!r) {
                     newTorrent = await dispatch('fetchFromURL', newTorrent);
+                } else {
+                    newTorrent = r;
                 }
             }
             let source = {};
@@ -671,19 +677,18 @@ export default function({router, message, db, sdk, ext, i18n, injectHash, inject
 
             for (const s of state.externalSubtitles) {
                 let autoselect = false;
-                if (s.autoselect) autoselect = true;
-                if (s.default || s.default == "") autoselect = true;
+                if (s.autoselect === true) autoselect = true;
+                if (s.default === true || s.default === "") autoselect = true;
                 tracks.push({
                     kind: 'subtitles',
                     label: s.label,
                     srclang: s.srclang,
                     src: await sdk.ext.streamUrl(s.src, {}, md),
-                    hash: md5(s.src),
+                    hash: md5(s.src + s.label),
                     autoselect,
                     type: 'ext',
                 });
             }
-
             for (const s of state.hls.subtitles) {
                 tracks.push({
                     kind: 'subtitles',
@@ -712,7 +717,6 @@ export default function({router, message, db, sdk, ext, i18n, injectHash, inject
                     }
                 }
             }
-
             tracks = processSubtitles(tracks);
             commit(SET_ATTACHED_TRACKS, tracks);
         },
@@ -748,6 +752,7 @@ export default function({router, message, db, sdk, ext, i18n, injectHash, inject
         },
         async init({ dispatch, commit }) {
             await Promise.all([
+                dispatch('checkApi'),
                 dispatch('getRecentTorrents'),
                 dispatch('getUserSettings'),
                 dispatch('initRouter'),
@@ -758,6 +763,15 @@ export default function({router, message, db, sdk, ext, i18n, injectHash, inject
         },
         updateWindowWidth({commit}) {
             commit(UPDATE_WINDOW_WIDTH);
+        },
+        async checkApi({commit}) {
+            if (!sdk) return;
+            try {
+                await sdk.checkApi();
+            } catch (e) {
+                commit(SET_API_UNREACHABLE);
+                debug(e);
+            }
         },
         async initWindowWidth({commit}) {
             if (typeof window !== "undefined") {
